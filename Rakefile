@@ -13,22 +13,12 @@ task :console do
   Pry.start
 end
 
-def with_connection
-  begin
-    conn = PG.connect host: ENV['DATABASE_HOST'],
-                      dbname: ENV['DATABASE_NAME'],
-                      user: ENV['DATABASE_USER'],
-                      password: ENV['DATABASE_PASSWORD']
-    return yield conn
-  rescue PG::Error => e
-  ensure
-    conn.close if conn
-  end
+namespace :db do
+  desc 'Run the migrations to setup the application database.'
+  task :migrate do
+    require 'pg'
 
-end
-
-def migrate!
-  sql = <<-SQL
+    sql = <<-SQL
 CREATE TABLE IF NOT EXISTS posts (
   id SERIAL NOT NULL PRIMARY KEY,
   post_id UUID UNIQUE NOT NULL,
@@ -59,7 +49,56 @@ CREATE OR REPLACE FUNCTION trigger_set_timestamp()
     END;
   $$
 SQL
-  results = with_connection do |conn|
-    conn.exec sql
+    
+    connect_hash = {
+      host: ENV['DATABASE_HOST'] || 'localhost',
+      dbname: ENV['DATABASE_NAME'] || 'hiveapp',
+      user: ENV['DATABASE_USER'] || 'hiveappuser',
+      password: ENV['DATABASE_PASSWORD'] || 'hiveappuser'
+    }
+
+    begin
+      conn = PG.connect connect_hash
+      conn.exec sql
+    rescue PG::Error => e
+      
+    ensure
+      conn.close if conn
+    end
+  end
+end
+
+namespace :deploy do
+
+  task :push do
+    puts 'Deploying to Heroku...'
+    puts `git push heroku`
+  end
+
+  task :restart do
+    puts 'Restarting app server...'
+    puts `heroku restart`
+  end
+
+  task :tag do
+    release_name = "release-#{Time.now.utc.strftime("%Y%m%d%H%M%S")}"
+    puts "Tagging release as '#{release_name}'"
+    puts `git tag -a #{release_name} -M 'Tagged release'`
+    puts `git push --tags heroku`
+  end
+
+  task :migrate do
+    puts 'Running database migrations...'
+    puts `heroku rake db:migrate`
+  end
+
+  task :off do
+    puts 'Putting the app into maintenance mode...'
+    puts `heroku maintenance:on`
+  end
+
+  task :on do
+    puts 'Taking app out of maintenance mode...'
+    puts `heroku maintenance:off`
   end
 end
