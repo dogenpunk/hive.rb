@@ -1,0 +1,6 @@
+#+TITLE: hive.rb
+#+AUTHOR: Matthew M. Nelson
+
+* What is =hive.rb=?
+This is a minimal microblog service that I wrote over the course of a couple of
+evenings.
