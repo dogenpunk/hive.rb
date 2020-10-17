@@ -78,45 +78,47 @@ helpers do
   end
 
   def validate! post
-    ["Content cannot be nil."] if post.content.nil?
+    ["Content cannot be nil."] if post['content'].nil?
   end
 
-  def persist! post
+  def persist! data
     sql = <<-SQL
-    INSERT INTO posts (id, content)
+    INSERT INTO posts (post_id, content)
     VALUES ($1::uuid, $2::text)
-    RETURNING *
     ON CONFLICT (id)
     DO
-      UPDATE SET content = EXCLUDED.content;
+      UPDATE SET content = EXCLUDED.content
+    RETURNING *;
 SQL
+    id = data['id'].nil? ? SecureRandom.uuid : data['id']
+    content = data['content']
     results = nil
     with_connection do |conn|
       conn.transaction do |c|
-        results = c.exec_params sql, [Post.id || SecureRandom.uuid, Post.content]
+        results = c.exec_params sql, [id, content]
       end
     end
 
-    results.nil? ? results : Post.new([:id, :content, :created_at, :updated_at].zip(results).to_h)
+    results.nil? ? results : Post.new([:id, :content, :created_at, :updated_at].zip(results.first.values).to_h)
   end
 
-  def hydrate id
+  def hydrate! id
     sql = <<-SQL
-    SELECT id, content, created_at, updated_at
+    SELECT post_id AS id, content, created_at, updated_at
     FROM posts
-    WHERE id = $1::uuid;
+    WHERE post_id = $1::uuid;
 SQL
     results = nil
     with_connection do |conn|
       results = conn.exec_params sql, [id]
     end
 
-    results.nil? ? results : Post.new([:id, :content, :created_at, :updated_at].zip(results).to_h)
+    results.nil? ? results : Post.new([:id, :content, :created_at, :updated_at].zip(results.first.values).to_h)
   end
 
   def get_recent_posts
     sql = <<-SQL
-    SELECT id, content, created_at, updated_at
+    SELECT post_id AS id, content, created_at, updated_at
     FROM posts
     ORDER BY updated_at DESC
     LIMIT 10;
@@ -125,8 +127,8 @@ SQL
       conn.exec sql
     end
 
-    results.each do |post|
-      Post.new([:id, :content, :created_at, :updated_at].zip(post).to_h)
+    results.collect do |post|
+      Post.new([:id, :content, :created_at, :updated_at].zip(post.values).to_h)
     end
   end
 end
@@ -158,7 +160,7 @@ end
 
 post '/new' do
   protected!
-  raise UnsupportedMediaType unless request.env['CONTENT_TYPE'] == 'application/json'
+  raise UnsupportedMediaType unless request.content_type == 'application/json'
 
   begin
     blog_post = JSON.parse(request.body.read)
@@ -167,7 +169,7 @@ post '/new' do
     halt 400, { message: e.to_s }.to_json
   end
 
-  if (errors = invalid?(blog_post))
+  if (errors = validate!(blog_post))
     halt 400, { errors: errors }.to_json
   end
 
@@ -183,13 +185,13 @@ get '/:id' do |id|
   raise NotFound unless @post
 
   last_modified @post.updated_at
-  etag @page.content
-  @post.to_json
+  etag @post.content
+  @post.to_h.to_json
 end
 
 put '/:id' do |id|
   protected!
-  raise UnsupportedMediaType unless request.env['CONTENT_TYPE'] == 'application/json'
+  raise UnsupportedMediaType unless request.content_type == 'application/json'
 
   begin
     new_blog_post = JSON.parse(request.body.read)
@@ -267,10 +269,39 @@ __END__
   %article
     %p= post.content
     %span.created_at= post.created_at
-end
-%form{action: '/', method: 'POST'}
+
+%form{action: '/new', method: 'POST'}
   %input{type: 'textarea', name: 'content'}
-  %button{type: 'submit', name: 'New Post'}
+  %button{type: 'submit', name: 'New Post', id: 'submit_btn'}
+
+  :javascript
+    let serializeForm = (form) => {
+        let obj = {};
+        let formData = new FormData(form);
+        for (var key of formData.keys()) {
+          obj[key] = formData.get(key);
+        }
+        return obj;
+      }
+
+    document.addEventListener('submit', (event) => {
+      event.preventDefault();
+      fetch('/new', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify(serializeForm(event.target))})
+        .then((response) => {
+                if (response.ok)
+                {
+                  return response.json();
+                } else
+                {
+                  return Promise.reject(response);
+                }
+              })
+        .then((data) => console.log(data))
+        .catch((error) => console.warn(error))
+                            });
 
 @@ about
 %p
